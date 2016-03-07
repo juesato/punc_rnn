@@ -3,6 +3,7 @@ local lfs = require( "lfs" )
 require 'util.string_utils'
 require 'util.utils'
 require 'torch'
+require 'nn'
 
 punc_ids = {}
 
@@ -10,9 +11,10 @@ punc_ids['.'] = 2
 punc_ids[','] = 3
 punc_ids['!'] = 2
 punc_ids['?'] = 4
-punc_ids['PAD_'] = 5
+-- punc_ids['PAD_'] = 5
 -- 1 is always NOPUNC
-idx_to_punc = {'', '.',',','?','PAD_'}
+-- idx_to_punc = {'', '.',',','?','PAD_'}
+idx_to_punc = {'', '.',',','?'}
 
 CORPUS_FILEPATH = '../data/corpus.txt'
 VOCAB_FILEPATH  = '../data/vocab.t7'
@@ -138,8 +140,8 @@ end
 function MinibatchLoader:load_batches(in_xtensorfile, in_ytensorfile, batch_size, split_sizes)
 	local function pad_input(x, y, len)
 		if x:size()[1] < len then
-			local X = torch.cat(x, torch.Tensor(len - x:size()[1]):fill(PAD_X_ID))
-			local Y = torch.cat(y, torch.Tensor(len - y:size()[1]):fill(PAD_Y_ID))
+			local X = torch.cat(torch.Tensor(len - x:size()[1]):fill(PAD_X_ID), x)
+			local Y = torch.cat(torch.Tensor(len - y:size()[1]):fill(PAD_Y_ID), y)
 			return X,Y
 		else
 			return x,y
@@ -195,7 +197,6 @@ function MinibatchLoader:load_batches(in_xtensorfile, in_ytensorfile, batch_size
 	end
 
 	-- randomly permute the order, so that we have variable lengths everywhere
-	print("xb", #x_batches)
 	local perm = torch.randperm(#x_batches)
 
 	local x_shuffled = {}
@@ -209,19 +210,17 @@ function MinibatchLoader:load_batches(in_xtensorfile, in_ytensorfile, batch_size
 	return x_shuffled, y_shuffled
 end
 
-function MinibatchLoader.create(corpus_text_path, batch_size, seq_length, split_fractions)
+function MinibatchLoader.create(corpus_text_path, batch_size, split_fractions)
 	-- Constructor method
 	-- Inputs:
 	--   corpus_text_path: path to corpus file, formatted as tokenized text, with one data point per line. As outputted by Python script
 	--   batch_size: an int, the batch size (unused)
-	--   seq_length: an int, the length of data points in words (unused)
 	--   split_fractions: an array of 3 floats, e.g. {.8, .1, .1} for train, val, test
 
     local self = {}
     setmetatable(self, MinibatchLoader)
 
     self.batch_size  = batch_size
-    -- self.seq_length  = seq_length
     self.bucket_lens = {{0,25},{25,50},{50,75},{75,100}}
     self.max_len     = self.bucket_lens[#self.bucket_lens][2]
 
@@ -283,11 +282,11 @@ function MinibatchLoader:ints_to_text(x_ints, y_ints)
 	-- if debug, at prediction - output TEXT of input, TEXT of predicted output
 	-- print("MinibatchLoader:ints_to_text")
 	local out = ''
-	for i=1,(#x_ints)[1] do
+	for i=1,#x_ints do
 		out = out .. (self.idx_to_word[x_ints[i]] or 'OOV') .. ' '
-		print("Y", y_ints[i])
-		out = out .. self.idx_to_punc[1] .. ' '
-		-- out = out .. self.idx_to_punc[y_ints[i]] .. ' '
+		-- print("Y", y_ints[i])
+		-- out = out .. self.idx_to_punc[1] .. ' '
+		out = out .. self.idx_to_punc[y_ints[i]] .. ' '
 	end
 	return out
 end
