@@ -114,8 +114,6 @@ function eval_model(split_idx, max_batches)
 
 		    local curTargets = targets[j][unmasked]
 		    local curPreds   = preds:resizeAs(targets[j])[unmasked]
-	    	-- local zeros = where(torch.eq(inputs[j], 0))
-	    	-- numZeros = numZeros + #zeros
 	    	for k=1,#loader.idx_to_punc do
 	    		-- local is_target = torch.eq(targets[j], k)
 	    		-- local is_pred = torch.eq(pred, k):resizeAs(is_target)
@@ -124,9 +122,6 @@ function eval_model(split_idx, max_batches)
 	    		local true_posits = torch.dot(is_target, is_pred)
 	    		local false_posits = is_pred:sum() - true_posits
 	    		local false_negs = is_target:sum() - true_posits
-	    		if k == 1 then
-	    			print ("missed no punc", false_negs)
-	    		end
 	    		true_pos[k] = true_pos[k] + true_posits
 	    		false_pos[k] = false_pos[k] + false_posits
 	    		false_neg[k] = false_neg[k] + false_negs
@@ -192,8 +187,6 @@ print(rnn)
 
 -- eval_model(2, 5)
 
-local timer = torch.Timer()
-timer:stop()
 -- TRAINING LOOP
 train_losses, val_losses = {}, {}
 local iterations = opt.max_epochs * loader.ntrain
@@ -204,16 +197,7 @@ for k = 1,iterations do
     local inputs, targets = prepro(x,y)
     -- inputs, targets should have dimension seq_len x batch_size 
     -- 2. forward pass
-	-- timer:reset()
-	-- timer:resume()
-
     local outputs = rnn:forward(inputs)
-
-    -- timer:stop()
-    -- print("Forward step", timer:time()) -- about 5 real
-    -- timer:reset()
-    -- timer:resume()
-
 
     -- print ("output shape", #outputs, outputs[1]:size(), torch.type(outputs[1]))
     -- print ("target shape", #targets, targets[1]:size(), torch.type(targets[1]))
@@ -229,10 +213,6 @@ for k = 1,iterations do
 
     local gradOutputs = criterion:backward(outputs, targets)
     local gradInputs = rnn:backward(inputs, gradOutputs)
-
-    -- timer:stop()
-    -- print("Backward step", timer:time()) -- 9s real
-    -- timer:reset()
 
     -- 4. updates parameters   
     rnn:updateParameters(opt.learningRate)
