@@ -19,6 +19,7 @@ cmd:option('-max_epochs',50,'number of full passes through the training data')
 cmd:option('-eval_val_every',500,'every how many iterations should we evaluate on validation data?')
 cmd:option('-print_every',10,'how many steps/minibatches between printing out the loss')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
+cmd:option('-init_from', '', 'initialize network parameters from checkpoint at this path')
 
 
 cmd:text()
@@ -56,11 +57,8 @@ function prepro(x,y)
     y = nn.JoinTable(1):forward(y)
     x = x:reshape(d1, x_size)
     y = y:reshape(d1, y_size)
-
     x = x:transpose(1,2):contiguous() -- swap the axes for faster indexing. 
     y = y:transpose(1,2):contiguous()
-    -- print("prepro2", x:size(), y:size())
-
     x = x:double():cuda()
     y = y:double():cuda()
 
@@ -100,7 +98,6 @@ function eval_model(split_idx, max_batches)
 	    local inputs, targets = prepro(x,y)
 
 	    local outputs = rnn:forward(inputs)
-	    local embedding = lookupSequence:forward(inputs)
 	    -- print(torch.type(outputs[1]), torch.type(targets[1]))
 	    local err = criterion:forward(outputs, targets)
 	    local numZeros = 0
@@ -134,7 +131,7 @@ function eval_model(split_idx, max_batches)
 		print("For punctuation mark", loader.idx_to_punc[i])
 		local prec = true_pos[i] / (true_pos[i] + false_pos[i])
 		local recall = true_pos[i] / (true_pos[i] + false_neg[i])
-		local f1 = prec * recall / (2 * (prec + recall))
+		local f1 = 2 * prec * recall / (prec + recall)
 		print ("Precision", prec)
 		print ("Recall", recall)
 		print ("F1 Score", f1)
@@ -144,46 +141,74 @@ function eval_model(split_idx, max_batches)
 end
 
 
-rnn = nn.Sequential()
 
-lookup = nn.LookupTableMaskZero(inputSize, config.embeddingSize)
-rnn:add(lookup)
-if opt.dropout then
-   -- rnn:insert(nn.Dropout(opt.dropoutProb):maskZero(1), 1)
-   -- rnn:insert(nn.Dropout(opt.dropoutProb), 1)
-end
-
--- RNN
-for i=1,config.num_layers do
-	if i == 1 then
-		rnn:add(nn.GRU(config.embeddingSize, config.hiddenSize):maskZero(1))
-		-- rnn:add(nn.GRU(config.embeddingSize, config.hiddenSize))
-	else
-		rnn:add(nn.GRU(config.hiddenSize, config.hiddenSize):maskZero(1))
-		-- rnn:add(nn.GRU(config.hiddenSize, config.hiddenSize))
-	end
-	if opt.dropout then
-	   -- rnn:insert(nn.Dropout(opt.dropoutProb):maskZero(1), 1)
-	   -- rnn:insert(nn.Dropout(opt.dropoutProb), 1)
-	end
-end
--- rnn:add(nn.Linear(config.hiddenSize, config.outputSize))
-rnn:add(nn.MaskZero(nn.Linear(config.hiddenSize, config.outputSize), 1))
-rnn:add(nn.MaskZero(nn.LogSoftMax(), 1))
-
--- use Sequencer for better data handling
-rnn = nn.Sequencer(rnn)
-rnn:cuda()
-
-lookupSequence = nn.Sequencer(lookup)
-
+-- Loss function
 criterion = nn.ClassNLLCriterion() 
 criterion = nn.MaskZeroCriterion(criterion, 1)
 criterion = nn.SequencerCriterion(criterion)
 criterion:cuda()
 
-print("Model :")
-print(rnn)
+if string.len(opt.init_from) > 0 then
+    print('loading a model from checkpoint ' .. opt.init_from)
+    local checkpoint = torch.load(opt.init_from)
+    rnn = checkpoint.rnn
+    print ("Loaded from batch # ", checkpoint.i, "Val loss was", checkpoint.val_loss)
+    eval_model(2, 50)
+    -- -- make sure the vocabs are the same
+    -- local vocab_compatible = true
+    -- local checkpoint_vocab_size = 0
+    -- for c,i in pairs(checkpoint.vocab) do
+    --     if not (vocab[c] == i) then
+    --         vocab_compatible = false
+    --     end
+    --     checkpoint_vocab_size = checkpoint_vocab_size + 1
+    -- end
+    -- if not (checkpoint_vocab_size == vocab_size) then
+    --     vocab_compatible = false
+    --     print('checkpoint_vocab_size: ' .. checkpoint_vocab_size)
+    -- end
+    -- assert(vocab_compatible, 'error, the character vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
+    
+    -- overwrite model settings based on checkpoint to ensure compatibility
+    -- print('overwriting rnn_size=' .. checkpoint.opt.rnn_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ', model=' .. checkpoint.opt.model .. ' based on the checkpoint.')
+    -- opt.rnn_size = checkpoint.opt.rnn_size
+    -- opt.num_layers = checkpoint.opt.num_layers
+    -- opt.model = checkpoint.opt.model
+    -- do_random_init = false
+else
+	rnn = nn.Sequential()
+
+	lookup = nn.LookupTableMaskZero(inputSize, config.embeddingSize)
+	rnn:add(lookup)
+	if opt.dropout then
+		rnn:insert(nn.Dropout(opt.dropoutProb):maskZero(1), 1)
+	    -- rnn:insert(nn.Dropout(opt.dropoutProb), 1)
+	end
+
+	-- RNN
+	for i=1,config.num_layers do
+		if i == 1 then
+			rnn:add(nn.GRU(config.embeddingSize, config.hiddenSize):maskZero(1))
+			-- rnn:add(nn.GRU(config.embeddingSize, config.hiddenSize))
+		else
+			rnn:add(nn.GRU(config.hiddenSize, config.hiddenSize):maskZero(1))
+			-- rnn:add(nn.GRU(config.hiddenSize, config.hiddenSize))
+		end
+		if opt.dropout then
+		   rnn:insert(nn.Dropout(opt.dropoutProb):maskZero(1), 1)
+		   -- rnn:insert(nn.Dropout(opt.dropoutProb), 1)
+		end
+	end
+	-- rnn:add(nn.Linear(config.hiddenSize, config.outputSize))
+	rnn:add(nn.MaskZero(nn.Linear(config.hiddenSize, config.outputSize), 1))
+	rnn:add(nn.MaskZero(nn.LogSoftMax(), 1))
+
+	-- use Sequencer for better data handling
+	rnn = nn.Sequencer(rnn)
+	rnn:cuda()
+	print("Model :")
+	print(rnn)
+end
 
 -- eval_model(2, 5)
 
