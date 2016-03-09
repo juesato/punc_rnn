@@ -152,11 +152,11 @@ function predict(X)
 
         -- print(cur_word:size(), current_state)
         local lst = protos.rnn:forward{cur_word, unpack(current_state)}
-        print("LST", lst)
+        -- print("LST", lst)
         current_state = {}
         for i=1,state_size do table.insert(current_state, lst[i]) end
         prediction = lst[#lst] -- last element holds the log probabilities
-        print("PREDICTION", prediction)
+        print("After word", X[j], "PREDICTION", prediction)
         local prob_, predicted_punc_ = prediction:max(2)
         predicted_punc = predicted_punc_:resize(1)
         Y[j] = predicted_punc[1]
