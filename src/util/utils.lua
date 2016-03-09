@@ -98,3 +98,14 @@ table.slice = function (list, first, last)
     end
     return sliced
 end
+
+function where(bytes)
+    assert(torch.isTypeOf(bytes, 'torch.ByteTensor') or torch.isTypeOf(bytes, 'torch.CudaTensor'), "Expected type torch.ByteTensor or torch.CudaTensor, got type " .. torch.type(bytes))
+    out = {}
+    for i=1,bytes:size(1) do
+        if bytes[i] == 1 then
+            out[#out + 1] = i
+        end
+    end
+    return out
+end

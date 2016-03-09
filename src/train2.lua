@@ -1,7 +1,6 @@
--- Multi-variate time-series example 
-
 require 'rnn'
 require 'lfs'
+require 'util.utils'
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -52,7 +51,7 @@ function prepro(x,y)
     local d1 = #x
     local x_size = x[1]:size(1)
     local y_size = y[1]:size(1)
-    print("shape", d1, x_size)
+    -- print("shape", d1, x_size)
     x = nn.JoinTable(1):forward(x)
     y = nn.JoinTable(1):forward(y)
     x = x:reshape(d1, x_size)
@@ -62,15 +61,15 @@ function prepro(x,y)
     y = y:transpose(1,2):contiguous()
     -- print("prepro2", x:size(), y:size())
 
-    -- x = x:float():cuda()
-    -- y = y:float():cuda()
+    x = x:double():cuda()
+    y = y:double():cuda()
 
     inputs, outputs = {}, {}
     for i=1,x:size(1) do
     	inputs[i] = x[i]
     	outputs[i] = y[i]
-    	local zeros = torch.eq(outputs[i], 0):double()
-    	outputs[i]:add(4, zeros)
+    	local zeros = torch.eq(outputs[i], 0):double():cuda()
+    	outputs[i]:add(1, zeros)
     end
     return inputs, outputs
 end
@@ -81,41 +80,122 @@ local MinibatchLoader = require 'util.data_utils' -- MinibatchLoader
 local loader = MinibatchLoader.create(opt.data_dir .. 'corpus.txt', config.batchSize, config.split_sizes)
 local inputSize = loader.vocab_size + 1
 
+function eval_model(split_idx, max_batches)
+    print('evaluating loss over split index ' .. split_idx)	
+    local n = loader.split_sizes[split_idx]
+    if max_batches ~= nil then n = math.min(max_batches, n) end	
+	loader:reset_batch_pointer(split_idx) -- move batch iteration pointer for this split to front
+    local loss = 0
+	rnn:evaluate() -- put in eval mode so that dropout works properly
+
+	true_pos, false_pos, false_neg = {}, {}, {}
+	for i=1,#loader.idx_to_punc do
+		true_pos[i] = 0
+		false_pos[i] = 0
+		false_neg[i] = 0
+	end
+
+    for i=1,n do
+	    local x, y = loader:next_batch(split_idx)
+	    local inputs, targets = prepro(x,y)
+
+	    local outputs = rnn:forward(inputs)
+	    local embedding = lookupSequence:forward(inputs)
+	    -- print(torch.type(outputs[1]), torch.type(targets[1]))
+	    local err = criterion:forward(outputs, targets)
+	    local numZeros = 0
+
+	    local totalTimeSteps = 0
+	    -- compute precision/recall/f1
+	    for j=1,#outputs do
+		    local probs, preds = torch.max(outputs[j], 2)
+		    local unmasked = torch.ne(inputs[j], 0)
+		    totalTimeSteps = totalTimeSteps + unmasked:sum()
+
+		    local curTargets = targets[j][unmasked]
+		    local curPreds   = preds:resizeAs(targets[j])[unmasked]
+	    	-- local zeros = where(torch.eq(inputs[j], 0))
+	    	-- numZeros = numZeros + #zeros
+	    	for k=1,#loader.idx_to_punc do
+	    		-- local is_target = torch.eq(targets[j], k)
+	    		-- local is_pred = torch.eq(pred, k):resizeAs(is_target)
+	    		local is_target = torch.eq(curTargets, k)
+	    		local is_pred = torch.eq(curPreds, k)
+	    		local true_posits = torch.dot(is_target, is_pred)
+	    		local false_posits = is_pred:sum() - true_posits
+	    		local false_negs = is_target:sum() - true_posits
+	    		if k == 1 then
+	    			print ("missed no punc", false_negs)
+	    		end
+	    		true_pos[k] = true_pos[k] + true_posits
+	    		false_pos[k] = false_pos[k] + false_posits
+	    		false_neg[k] = false_neg[k] + false_negs
+	    	end
+		end
+	    loss = loss + err / (#outputs * config.batchSize - numZeros)
+	end
+	print("Avg loss ", loss / n)
+	for i=1,#loader.idx_to_punc do
+		print("For punctuation mark", loader.idx_to_punc[i])
+		local prec = true_pos[i] / (true_pos[i] + false_pos[i])
+		local recall = true_pos[i] / (true_pos[i] + false_neg[i])
+		local f1 = prec * recall / (2 * (prec + recall))
+		print ("Precision", prec)
+		print ("Recall", recall)
+		print ("F1 Score", f1)
+	end
+
+	return (loss / n)
+end
+
+
 rnn = nn.Sequential()
 
 lookup = nn.LookupTableMaskZero(inputSize, config.embeddingSize)
 rnn:add(lookup)
 if opt.dropout then
-   rnn:insert(nn.Dropout(opt.dropoutProb), 1)
+   -- rnn:insert(nn.Dropout(opt.dropoutProb):maskZero(1), 1)
+   -- rnn:insert(nn.Dropout(opt.dropoutProb), 1)
 end
 
 -- RNN
 for i=1,config.num_layers do
 	if i == 1 then
 		rnn:add(nn.GRU(config.embeddingSize, config.hiddenSize):maskZero(1))
+		-- rnn:add(nn.GRU(config.embeddingSize, config.hiddenSize))
 	else
 		rnn:add(nn.GRU(config.hiddenSize, config.hiddenSize):maskZero(1))
+		-- rnn:add(nn.GRU(config.hiddenSize, config.hiddenSize))
 	end
 	if opt.dropout then
-	   rnn:insert(nn.Dropout(opt.dropoutProb), 1)
+	   -- rnn:insert(nn.Dropout(opt.dropoutProb):maskZero(1), 1)
+	   -- rnn:insert(nn.Dropout(opt.dropoutProb), 1)
 	end
 end
+-- rnn:add(nn.Linear(config.hiddenSize, config.outputSize))
 rnn:add(nn.MaskZero(nn.Linear(config.hiddenSize, config.outputSize), 1))
-rnn:add(nn.LogSoftMax())
+rnn:add(nn.MaskZero(nn.LogSoftMax(), 1))
 
 -- use Sequencer for better data handling
 rnn = nn.Sequencer(rnn)
+rnn:cuda()
+
+lookupSequence = nn.Sequencer(lookup)
 
 criterion = nn.ClassNLLCriterion() 
 criterion = nn.MaskZeroCriterion(criterion, 1)
 criterion = nn.SequencerCriterion(criterion)
+criterion:cuda()
 
 print("Model :")
 print(rnn)
 
+-- eval_model(2, 5)
+
 local timer = torch.Timer()
 timer:stop()
 -- TRAINING LOOP
+train_losses, val_losses = {}, {}
 local iterations = opt.max_epochs * loader.ntrain
 
 for k = 1,iterations do 
@@ -124,15 +204,15 @@ for k = 1,iterations do
     local inputs, targets = prepro(x,y)
     -- inputs, targets should have dimension seq_len x batch_size 
     -- 2. forward pass
-	timer:reset()
-	timer:resume()
+	-- timer:reset()
+	-- timer:resume()
 
     local outputs = rnn:forward(inputs)
 
-    timer:stop()
-    print("Forward step", timer:time()) -- about 5 real
-    timer:reset()
-    timer:resume()
+    -- timer:stop()
+    -- print("Forward step", timer:time()) -- about 5 real
+    -- timer:reset()
+    -- timer:resume()
 
 
     -- print ("output shape", #outputs, outputs[1]:size(), torch.type(outputs[1]))
@@ -150,9 +230,9 @@ for k = 1,iterations do
     local gradOutputs = criterion:backward(outputs, targets)
     local gradInputs = rnn:backward(inputs, gradOutputs)
 
-    timer:stop()
-    print("Backward step", timer:time()) -- 9s real
-    timer:reset()
+    -- timer:stop()
+    -- print("Backward step", timer:time()) -- 9s real
+    -- timer:reset()
 
     -- 4. updates parameters   
     rnn:updateParameters(opt.learningRate)
@@ -160,25 +240,26 @@ for k = 1,iterations do
     -- every now and then or on last iteration
     if k % opt.eval_val_every == 0 or k == iterations then
         -- evaluate loss on validation data
-        -- local val_loss = eval_split(2) -- 2 = validation
-        -- val_losses[i] = val_loss
+        local val_loss = eval_model(2, 100) -- 2 = validation
+        val_losses[k] = val_loss
+
         local epoch = k / loader.ntrain
-        local savefile = string.format('%s/lm_%s_epoch%.2f.t7', opt.checkpoint_dir, opt.savefile, epoch)
+        local savefile = string.format('%s/lm_%s_epoch%.2f_%.5f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.rnn = rnn
         checkpoint.opt = opt
         -- checkpoint.train_losses = train_losses
-        -- checkpoint.val_loss = val_loss
-        -- checkpoint.val_losses = val_losses
-        checkpoint.i = i
+        checkpoint.val_loss = val_loss
+        checkpoint.val_losses = val_losses
+        checkpoint.i = k
         -- checkpoint.epoch = epoch
         checkpoint.vocab = loader.word_to_idx
         torch.save(savefile, checkpoint)
     end
 
     if k % opt.print_every == 0 then
-	    print('Iter: ' .. k .. '   Length: ' .. #inputs .. '   Avg Err: ' .. err / #inputs)
+	    print('Iter: ' .. k .. '   Length: ' .. #inputs .. '   Avg Err: ' .. err / #inputs / config.batchSize)
 
     end
    

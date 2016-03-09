@@ -45,21 +45,23 @@ function MinibatchLoader.parse_tokenized_line(tokenized_list)
 	local words = trimmed:split(" ")
 	local x = {}
 	local y = {}
-	local i = 0
+	local i = 1
 	for j,word in ipairs(words) do
 		if punc_ids[word] ~= nil and y[i] == nil and i > 0 then
 			-- found punctuation symbol, haven't already assigned punc here
 			y[i] = punc_ids[word]
 		else 
 			if containsAlphanumerics(word) then
-				i = i+1
 				x[i] = word
+				i = i+1
 			end
 		end
 	end
 	local y_tensor = torch.ones(#x)
 	for i,val in pairs(y) do
-		y_tensor[i] = val
+		if i <= #x then
+			y_tensor[i] = val
+		end
 	end
 	return x,y_tensor
 end
