@@ -1,3 +1,46 @@
+function deepcopy(orig)
+    local orig_type = type(orig)
+    local copy
+    if orig_type == 'table' then
+        copy = {}
+        for orig_key, orig_value in next, orig, nil do
+            copy[deepcopy(orig_key)] = deepcopy(orig_value)
+        end
+        setmetatable(copy, deepcopy(getmetatable(orig)))
+    else -- number, string, boolean, etc
+        copy = orig
+    end
+    return copy
+end
+
+function sequenceToTensor(s)
+    for i=1,#s do
+        local sz = torch.totable(s[i]:size())
+        table.insert(sz,1)
+        s[i]:view(unpack(sz))
+    end
+    return nn.JoinTable(1):forward(s)
+end
+
+function debugNansSequence(s)
+    return debugNansTensor(sequenceToTensor(s))
+end
+
+function debugNansTensor(t)
+    local nans = t:ne(t)
+    if nans:sum() == 0 then
+        return false
+    else
+        print ("Shape of Tensor is", t:size())
+        for i=1,nans:size(1) do
+            if nans[i]:sum() > 0 then
+                print ("Row",i,"has",nans[i]:sum(),"nans")
+            end
+        end
+        return true
+    end
+end
+
 function defaultdict(default_elem)
     local tbl = {}
     local mtbl = {}

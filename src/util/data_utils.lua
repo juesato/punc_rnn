@@ -288,7 +288,7 @@ function MinibatchLoader:ints_to_text(x_ints, y_ints)
 		out = out .. (self.idx_to_word[x_ints[i]] or 'OOV') .. ' '
 		-- print("Y", y_ints[i])
 		-- out = out .. self.idx_to_punc[1] .. ' '
-		out = out .. self.idx_to_punc[y_ints[i]] .. ' '
+		out = out .. (self.idx_to_punc[y_ints[i]] or 'nil') .. ' '
 	end
 	return out
 end
