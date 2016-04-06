@@ -54,12 +54,12 @@ end
 local _ = require 'moses'
 local updateOutputLinear = nn.Linear.updateOutput
 
--- function nn.Linear.updateOutput(self, input)
---     assert(not _.isNaN(input:sum()))
---     local output = updateOutputLinear(self, input)
---     assert(not _.isNaN(output:sum()))
---     return output
--- end
+function nn.Linear.updateOutput(self, input)
+    assert(not _.isNaN(input:sum()))
+    local output = updateOutputLinear(self, input)
+    assert(not _.isNaN(output:sum()))
+    return output
+end
 
 -- local updateOutputSequencer = nn.Sequencer.updateOutput
 -- 
@@ -95,6 +95,41 @@ function nn.LogSoftMax.updateOutput(self, input)
     local output = updateOutputSoftmax(self, input)
     assert(not _.isNaN(output:sum()))
     return output
+end
+
+local accGradParametersLinear = nn.Linear.accGradParameters
+
+-- function nn.Linear.accGradParameters(self, input, gradOutput, scale)
+--     assert(not _.isNaN(gradOutput:sum()))
+--     local gradInput = accGradParametersLinear(self, input, gradOutput, scale)
+-- -- gradInput is null
+--     assert(not _.isNaN(self.weight))
+--     assert(not _.isNaN(self.gradWeight))
+-- end
+
+local accGradParametersLookup = nn.LookupTableMaskZero.accGradParameters
+
+function nn.LookupTableMaskZero.accGradParameters(self, input, gradOutput, scale)
+    assert(not _.isNaN(gradOutput:sum()))
+    local gradInput = accGradParametersLookup(self, input, gradOutput, scale)
+    return gradInput
+end
+
+local accGradParametersLSTM = nn.LSTM.accGradParameters
+
+function nn.LSTM.accGradParameters(self, input, gradOutput, scale)
+    assert(not _.isNaN(gradOutput:sum()))
+    local gradInput = accGradParametersLSTM(self, input, gradOutput, scale)
+    return gradInput
+end
+
+local updateGradInputSoftmax = nn.LogSoftMax.updateGradInput
+
+function nn.LogSoftMax.updateGradInput(self, input, gradOutput)
+    assert(not _.isNaN(gradOutput:sum()))
+    local gradInput = updateGradInputSoftmax(self, input, gradOutput)
+    assert(not _.isNaN(gradInput:sum()))
+    return gradInput
 end
 
 -- ERASE THIS BLOCK ABOVE THIS LINE LATER --
