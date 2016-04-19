@@ -5,6 +5,7 @@ require 'util.utils'
 require 'torch'
 require 'nn'
 
+
 punc_ids = {}
 
 punc_ids['.'] = 2
@@ -67,6 +68,7 @@ function MinibatchLoader.parse_tokenized_line(tokenized_list)
 end
 
 function MinibatchLoader.create_vocab_mapping(in_corpusfile, out_vocabfile, vocab_size)
+    local w2vutils = require 'w2vutils'
 	-- parse words one at a time, take top vocab_size words
 	local word_counts = defaultdict(0)
 	local j=0
@@ -83,24 +85,37 @@ function MinibatchLoader.create_vocab_mapping(in_corpusfile, out_vocabfile, voca
     	if j%1000==0 then print("Processed",j, "lines\n") end
     end
     local i = 1
+    local word_to_vec = {}
     local idx_to_word = {}
+    local unk_vec = w2vutils:word2vec('UNK_')
+    local tot_unks = 0
     for k,v in spairs_by_value(word_counts) do
     	if i > vocab_size then break end
     	idx_to_word[i] = k
+        word_to_vec[k] = w2vutils:word2vec(k)
+        if torch.all(unk_vec:eq(word_to_vec[k])) then
+            tot_unks = tot_unks + 1
+        end
     	i = i+1
     end
-    torch.save(out_vocabfile, idx_to_word)
+    print ("Unknown words", tot_unks)
+    torch.save(out_vocabfile, {
+        idx_to_word = idx_to_word,
+        word_to_vec = word_to_vec
+    })
 
     print(idx_to_word[1], idx_to_word[2], idx_to_word[3], idx_to_word[4])
 end
 
 function MinibatchLoader.load_vocab_file(vocab_file)
-	local idx_to_word = torch.load(vocab_file)
+	local vocab = torch.load(vocab_file)
+    local idx_to_word = vocab['idx_to_word']
+    local word_to_vec = vocab['word_to_vec']
 	local word_to_idx = {}
 	for i,word in ipairs(idx_to_word) do
 		word_to_idx[word] = i
 	end
-	return idx_to_word, word_to_idx
+	return idx_to_word, word_to_idx, word_to_vec
 end	
 
 function MinibatchLoader:create_tensor_file(corpus_text_path)
@@ -152,7 +167,6 @@ function MinibatchLoader:load_batches(in_xtensorfile, in_ytensorfile, batch_size
 
 	local x_data = torch.load(in_xtensorfile) -- so these are now torch tensors apparently
 	local y_data = torch.load(in_ytensorfile)
-
 	print ("total size", #x_data)
 
 	local x_buckets = defaultdict_from_fxn(function () return {} end)
@@ -208,7 +222,6 @@ function MinibatchLoader:load_batches(in_xtensorfile, in_ytensorfile, batch_size
 		x_shuffled[i] = x_batches[v]
 		y_shuffled[i] = y_batches[v]
 	end
-
 	return x_shuffled, y_shuffled
 end
 
@@ -231,7 +244,7 @@ function MinibatchLoader.create(corpus_text_path, batch_size, split_fractions)
 		print("Creating file vocab.t7")
 		MinibatchLoader.create_vocab_mapping(corpus_text_path, VOCAB_FILEPATH, VOCAB_SIZE)
 	end
-	self.idx_to_word, self.word_to_idx = MinibatchLoader.load_vocab_file(VOCAB_FILEPATH)
+	self.idx_to_word, self.word_to_idx, self.word_to_vec = MinibatchLoader.load_vocab_file(VOCAB_FILEPATH)
 	-- self.vocab_mapping = self.word_to_idx
 	self.vocab_size    = #self.idx_to_word
 	self.OOV_idx       = self.vocab_size + 1
@@ -276,6 +289,7 @@ function MinibatchLoader:text_to_ints(x_textin)
 	for i,word in ipairs(x_textin) do
 		x[i] = self.word_to_idx[word] or self.OOV_idx
 	end
+    x:type('torch.DoubleTensor')
 	return x
 end
 
@@ -332,8 +346,6 @@ function MinibatchLoader:next_batch(split_index)
     if split_index == 2 then idx = idx + self.ntrain end -- offset by train set size
     if split_index == 3 then idx = idx + self.ntrain + self.nval end -- offset by train + val
 
-    -- print("X data", self.x_batches[idx])
-    local vect_sz = self.vocab_size + 1
     return self.x_batches[idx], self.y_batches[idx]
 end
 
